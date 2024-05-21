@@ -14,6 +14,7 @@ METADATA = (
     "ymin",
     "ymax",
     "y_axis",
+    "num_thresholds",
     "threshold",
     "threshold_initialized",
     "ymin_plot",

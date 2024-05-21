@@ -3,9 +3,9 @@ from abc import abstractmethod
 import h5py
 from colorama import Fore, Style
 from .xiaolin_wu import quick_draw
-from .measurements.waveform_analysis import nrz_waveform_analysis
-from .measurements.histogram_analysis import nrz_histogram_analysis
-from .measurements.bathtub import generate_vertical_bathtub, to_q_scale
+from .measurements.waveform_analysis import nrz_waveform_analysis, pam4_waveform_analysis
+from .measurements.histogram_analysis import nrz_histogram_analysis, pam4_histogram_analysis
+from .measurements.bathtub import generate_vertical_bathtub_nrz, generate_vertical_bathtub_pam4, to_q_scale
 import matplotlib.pyplot as plt
 import matplotlib
 from typing import Optional, List, Callable, Dict
@@ -71,8 +71,8 @@ class Eye:
         hdf5_path: str,
         sampling_offset_mode: str,
         dump_to_hdf5: bool,
-        num_bits_to_filter_on_before: int = 3,
-        num_bits_to_filter_on_after: int = 1,
+        num_bits_to_filter_on_before: int,
+        num_bits_to_filter_on_after: int,
     ) -> None:
         assert scale_y > 1
         self.initialized = False
@@ -102,9 +102,11 @@ class Eye:
         self.filter_width = num_bits_to_filter_on_before + num_bits_to_filter_on_after + 1
 
         if format == "NRZ":
+            self.num_thresholds = 1
             self.nz = 2**self.filter_width
             levels = [[0], [1]]
         elif format == "PAM4":
+            self.num_thresholds = 3
             self.nz = 4**self.filter_width
             levels = [[0], [1], [2], [3]]
 
@@ -112,8 +114,8 @@ class Eye:
             shape=(self.nx, self.ny, self.nz),
             dtype=np.double,
         )
-        self.bathtub = np.zeros(shape=(self.nx, self.ny), dtype=np.double)
-        self.raw_bathtub = np.zeros(shape=(self.nx, self.ny), dtype=np.double)
+        self.bathtub = np.zeros(shape=(self.nx, self.ny, self.num_thresholds), dtype=np.double)
+        self.raw_bathtub = np.zeros(shape=(self.nx, self.ny, self.num_thresholds), dtype=np.double)
 
         # Generate the corresponding filter patterns
         def permute_two_lists(l1, l2):
@@ -152,6 +154,10 @@ class Eye:
         self.tdec_m1 = 0.0
         self.tdec_m2 = 0.0
         self.tdec_ber = 1e-12
+
+        self.tdecq_s_noise = 0.0
+        self.tdecq_ceq = 1.0
+        self.tdecq_ber = 2.4e-4
 
     @abstractmethod
     def add_data(self):
@@ -201,6 +207,10 @@ class Eye:
         self.threshold = np.mean(_wvf)  # will be updated later from the first waveform
         self.ymax_plot = self.threshold
         self.ymin_plot = self.threshold
+        
+        # PAM-4 eye thresholds (first guess)
+        self.threshold_lower = (np.min(_wvf) + self.threshold) / 2
+        self.threshold_upper = (self.threshold + np.max(_wvf)) / 2
 
         # Create file to dump eye to
         if self.dump_to_hdf5:
@@ -234,17 +244,38 @@ class Eye:
         # These do *NOT* have to be integers
         sampling_indices = (sampling_times - time[0]) / self.dt
 
-        msmts, msmt_counts = nrz_waveform_analysis(
-            time,
-            wvf,
-            sampling_indices,
-            self.threshold,
-            self.period
-        )
-        if not self.threshold_initialized:
-            if not np.isnan(msmts["threshold"]):
-                self.threshold = msmts["threshold"]  # update sampling threshold
-            self.threshold_initialized = True
+        if self.format == "NRZ":
+            msmts, msmt_counts = nrz_waveform_analysis(
+                time,
+                wvf,
+                sampling_indices,
+                self.threshold,
+                self.period
+            )
+            if not self.threshold_initialized:
+                # If multiple waveforms are added, use only the thresholds determined from the first one
+                if not np.isnan(msmts["threshold"]):
+                    self.threshold = msmts["threshold"]
+                self.threshold_initialized = True
+        else:  # PAM-4
+            msmts, msmt_counts = pam4_waveform_analysis(
+                time,
+                wvf,
+                sampling_indices,
+                self.threshold_lower,
+                self.threshold,
+                self.threshold_upper,
+                self.period
+            )
+            if not self.threshold_initialized:
+                # If multiple waveforms are added, use only the thresholds determined from the first one
+                if not np.isnan(msmts["threshold"]):
+                    self.threshold = msmts["threshold"]
+                if not np.isnan(msmts["threshold_lower"]):
+                    self.threshold_upper = msmts["threshold_lower"]
+                if not np.isnan(msmts["threshold_upper"]):
+                    self.threshold_upper = msmts["threshold_upper"]
+                self.threshold_initialized = True
 
         # Update average waveform measurement values
         for k, m in msmts.items():
@@ -309,7 +340,6 @@ class Eye:
         # Find the pattern indices for each sampling instant.
         sampling_values = np.interp(sampling_times, time, wvf)
         if self.format == "NRZ":
-
             def determine_bit(sv: float) -> int:
                 if sv > self.threshold:
                     return 1
@@ -317,7 +347,19 @@ class Eye:
                     return 0
 
         else:  # "PAM4"
-            raise NotImplementedError("TODO")
+            if self.threshold_upper <= self.threshold:
+                raise ValueError(f"Warning! self.threshold_upper <= self.threshold: {self.threshold_upper} <= {self.threshold}")
+            if self.threshold <= self.threshold_lower:
+                raise ValueError(f"Warning! self.threshold <= self.threshold_lower: {self.threshold} <= {self.threshold_lower}")
+            def determine_bit(sv: float) -> int:
+                if sv > self.threshold_upper:
+                    return 3
+                elif (sv <= self.threshold_upper) and (sv > self.threshold):
+                    return 2
+                elif (sv <= self.threshold) and (sv > self.threshold_lower):
+                    return 1
+                else: # sv <= self.thresold_lower:
+                    return 0
         data_values = [determine_bit(sv) for sv in sampling_values]
         pattern_indices = -1 * np.ones(len(sampling_times), dtype=int)
         for i in range(len(pattern_indices) - self.filter_width):
@@ -443,33 +485,61 @@ class Eye:
         force_compute_histogram_statistics: bool = False,
     ) -> Dict[str, float]:
         if self.__compute_histogram_analysis or force_compute_histogram_statistics:
-            generate_vertical_bathtub(
-                hist=self.hist_data,
-                bathtub=self.bathtub,
-                raw_bathtub=self.raw_bathtub,
-                pattern_indices=self.pattern_indices,
-                pattern_counts=self.pattern_counts,
-                data_values=self.data_values,
-                sensitivity=self.slicer_sensitivity,
-                y_scale=self.y_axis,
-            )
-
-            nrz_histogram_analysis(
-                self.__msmts,
-                self.__msmt_counts,
-                self.hist_data,
-                self.bathtub,
-                self.ymin,
-                self.ymax,
-                self.dx,
-                self.dy,
-                self.threshold,
-                self.pattern_counts,
-                self.tdec_s_noise,
-                self.tdec_m1,
-                self.tdec_m2,
-                self.tdec_ber,
-            )
+            if self.format == "NRZ":
+                generate_vertical_bathtub_nrz(
+                    hist=self.hist_data,
+                    bathtub=self.bathtub,
+                    raw_bathtub=self.raw_bathtub,
+                    pattern_indices=self.pattern_indices,
+                    pattern_counts=self.pattern_counts,
+                    data_values=self.data_values,
+                    sensitivity=self.slicer_sensitivity,
+                    y_scale=self.y_axis,
+                )
+                nrz_histogram_analysis(
+                    self.__msmts,
+                    self.__msmt_counts,
+                    self.hist_data,
+                    self.bathtub,
+                    self.ymin,
+                    self.ymax,
+                    self.dx,
+                    self.dy,
+                    self.threshold,
+                    self.pattern_counts,
+                    self.tdec_s_noise,
+                    self.tdec_m1,
+                    self.tdec_m2,
+                    self.tdec_ber,
+                )
+            else:  # PAM-4
+                generate_vertical_bathtub_pam4(
+                    hist=self.hist_data,
+                    bathtub=self.bathtub,
+                    raw_bathtub=self.raw_bathtub,
+                    pattern_indices=self.pattern_indices,
+                    pattern_counts=self.pattern_counts,
+                    data_values=self.data_values,
+                    # sensitivity=self.slicer_sensitivity,
+                    y_scale=self.y_axis,
+                )
+                pam4_histogram_analysis(
+                    self.__msmts,
+                    self.__msmt_counts,
+                    self.hist_data,
+                    self.bathtub,
+                    self.ymin,
+                    self.ymax,
+                    self.dx,
+                    self.dy,
+                    self.threshold_lower,
+                    self.threshold,
+                    self.threshold_upper,
+                    self.pattern_counts,
+                    self.tdecq_s_noise,
+                    self.tdecq_ceq,
+                    self.tdecq_ber,
+                )
             self.__compute_histogram_analysis = False
         return self.__msmts
 
@@ -522,7 +592,8 @@ class Eye:
         """
         Optimize the sampling time to minimize the BER
         """
-        heights = np.array([np.sum(column < ber) for column in self.bathtub])
+        assert self.format == "NRZ"
+        heights = np.array([np.sum(column < ber) for column in self.bathtub[:,:,0]])
         beyond_max_offset = (np.abs(np.arange(0, 1, 1 / len(heights)) - 0.5) > max_offset_ui)
         heights[beyond_max_offset] = 0
         sidx = round(self.bathtub.shape[0] / 2)
@@ -571,7 +642,7 @@ class Eye:
                 "Cannot plot an eye with no data.  Please add data first with the add_data() method."
             )
 
-        # Run hist analysis (if it hasn't run already), to get the ber countours
+        # Run hist analysis (if it hasn't run already), to get the ber contours
         _ = self.get_measurements()
 
         hist = copy.deepcopy(self.hist_data)
@@ -580,7 +651,7 @@ class Eye:
             hist = np.sum(hist, axis=2)
         else:
             if pattern not in self.data_patterns:
-                raise ValueError()
+                raise ValueError(f"patter {pattern} not in data patterns: {self.data_patterns}")
             hist = hist[:, :, self.data_patterns.index(pattern)]
 
         hist[hist < 1e-1] = 1e-2
@@ -614,19 +685,20 @@ class Eye:
         plt.colorbar()
         if show_contours:
             levels = sorted(ber_thresholds)
-            cs = plt.contour(
-                np.roll(
-                    np.concatenate(
-                        (self.bathtub.T, self.bathtub.T),
-                        axis=1,
+            for bidx in range(self.num_thresholds):
+                cs = plt.contour(
+                    np.roll(
+                        np.concatenate(
+                            (self.bathtub[:,:,bidx].T, self.bathtub[:,:,bidx].T),
+                            axis=1,
+                        ),
+                        shift=self.nx // 2,
                     ),
-                    shift=self.nx // 2,
-                ),
-                levels,
-                colors="w",
-                origin="lower",
-                extent=[-self.period, self.period, self.ymin, self.ymax],
-            )
+                    levels,
+                    colors="w",
+                    origin="lower",
+                    extent=[-self.period, self.period, self.ymin, self.ymax],
+                )
             if show_contour_label:
                 plt.clabel(cs, inline=1, fontsize=8, fmt={lv: str(lv) for lv in levels})
         _range = self.ymax_plot - self.ymin_plot
@@ -643,6 +715,7 @@ class Eye:
         self,
         show: bool = True,
         raw_bathtub: bool = False,
+        bathtub_index: int = 0,
     ) -> plt.Figure:
         """
         Bathtub plotting function
@@ -651,7 +724,7 @@ class Eye:
             raise Exception(
                 "Cannot plot an eye with no data.  Please add data first with the add_data() method."
             )
-        b = self.raw_bathtub if raw_bathtub else self.bathtub
+        b = self.raw_bathtub[:,:,bathtub_index] if raw_bathtub else self.bathtub[:,:,bathtub_index]
 
         # Run hist analysis (if it hasn't run already)
         _ = self.get_measurements()
@@ -680,7 +753,7 @@ class Eye:
         cs = plt.contour(
             np.roll(
                 np.concatenate(
-                    (self.bathtub.T, self.bathtub.T),
+                    (self.bathtub[:,:,bathtub_index].T, self.bathtub[:,:,bathtub_index].T),
                     axis=1,
                 ),
                 shift=self.nx // 2,
@@ -717,8 +790,17 @@ class Eye:
         # Run hist analysis (if it hasn't run already)
         _ = self.get_measurements()
 
-        f = (self.threshold - self.ymin) / (self.ymax - self.ymin)
-        tidx = round(f * self.hist_data.shape[1])  # threshold index (y)
+        if self.format == "NRZ":
+            f = (self.threshold - self.ymin) / (self.ymax - self.ymin)
+            tidx = [round(f * self.hist_data.shape[1])]  # threshold index (y)
+        else:  # PAM4
+            f1 = (self.threshold_lower - self.ymin) / (self.ymax - self.ymin)
+            f2 = (self.threshold - self.ymin) / (self.ymax - self.ymin)
+            f3 = (self.threshold_upper - self.ymin) / (self.ymax - self.ymin)
+            tidx1 = round(f1 * self.hist_data.shape[1])  # threshold index (y)
+            tidx2 = round(f2 * self.hist_data.shape[1])  # threshold index (y)
+            tidx3 = round(f3 * self.hist_data.shape[1])  # threshold index (y)
+            tidx = [tidx1, tidx2, tidx3]
         sidx = round(self.bathtub.shape[0] / 2)  # sampling time index (x)
 
         fig = plt.figure(figsize=(10, 5))
@@ -726,31 +808,32 @@ class Eye:
         if y_axis == "ber":
             if direction == "horizontal":
                 plt.title("Horizontal cross section")
-                mv = np.min([np.min(self.raw_bathtub[:, tidx]), np.min(self.bathtub[:, tidx])])
-                plt.semilogy(
-                    self.x_axis,
-                    self.raw_bathtub[:, tidx],
-                    'r.',
-                    label="raw bathtub",
-                )
-                plt.semilogy(
-                    self.x_axis,
-                    self.bathtub[:, tidx],
-                    label="bathtub fit",
-                )
+                mv = np.min([np.min(self.raw_bathtub), np.min(self.raw_bathtub)])
+                for eye_idx, _tidx in enumerate(tidx):
+                    plt.semilogy(
+                        self.x_axis,
+                        self.raw_bathtub[:, _tidx, eye_idx],
+                        'r.',
+                        label="raw bathtub",
+                    )
+                    plt.semilogy(
+                        self.x_axis,
+                        self.bathtub[:, _tidx, eye_idx],
+                        label="bathtub fit",
+                    )
                 plt.xlabel(f"time [{str(self.x_units)}]")
             else:
                 plt.title("Vertical cross section")
-                mv = np.min([np.min(self.raw_bathtub[sidx, :]), np.min(self.bathtub[sidx, :])])
+                mv = np.min([np.min(self.raw_bathtub[sidx, :, :]), np.min(self.bathtub[sidx, :, :])])
                 plt.semilogy(
                     self.y_axis,
-                    self.raw_bathtub[sidx, :],
+                    self.raw_bathtub[sidx, :, :],
                     'r.',
                     label="raw bathtub",
                 )
                 plt.semilogy(
                     self.y_axis,
-                    self.bathtub[sidx, :],
+                    self.bathtub[sidx, :, :],
                     label="bathtub fit",
                 )
                 plt.xlabel(f"signal [{str(self.y_units)}]")
@@ -759,41 +842,43 @@ class Eye:
         else:  # q-scale
             if direction == "horizontal":
                 plt.title("Horizontal cross section")
-                lower_q = to_q_scale(self.bathtub[:sidx, tidx], np.max(self.bathtub[:sidx, tidx]))
-                upper_q = to_q_scale(self.bathtub[sidx:, tidx], np.max(self.bathtub[sidx:, tidx]))
-                lower_q_raw = to_q_scale(self.raw_bathtub[:sidx, tidx], np.max(self.raw_bathtub[:sidx, tidx]))
-                upper_q_raw = to_q_scale(self.raw_bathtub[sidx:, tidx], np.max(self.raw_bathtub[sidx:, tidx]))
-                mv = np.max([np.max(lower_q), np.max(upper_q), np.max(lower_q_raw), np.max(upper_q_raw)])
-                plt.plot(
-                    self.x_axis,
-                    np.append(lower_q_raw, upper_q_raw),
-                    'r.',
-                    label="raw bathtub",
-                )
-                plt.plot(
-                    self.x_axis,
-                    np.append(lower_q, upper_q),
-                    label="bathtub fit",
-                )
+                for eye_idx, _tidx in enumerate(tidx):
+                    lower_q = to_q_scale(self.bathtub[:sidx, _tidx, eye_idx], np.max(self.bathtub[:sidx, _tidx, eye_idx]))
+                    upper_q = to_q_scale(self.bathtub[sidx:, _tidx, eye_idx], np.max(self.bathtub[sidx:, _tidx, eye_idx]))
+                    lower_q_raw = to_q_scale(self.raw_bathtub[:sidx, _tidx, eye_idx], np.max(self.raw_bathtub[:sidx, _tidx, eye_idx]))
+                    upper_q_raw = to_q_scale(self.raw_bathtub[sidx:, _tidx, eye_idx], np.max(self.raw_bathtub[sidx:, _tidx, eye_idx]))
+                    mv = np.max([np.max(lower_q), np.max(upper_q), np.max(lower_q_raw), np.max(upper_q_raw)])
+                    plt.plot(
+                        self.x_axis,
+                        np.append(lower_q_raw, upper_q_raw),
+                        'r.',
+                        label="raw bathtub",
+                    )
+                    plt.plot(
+                        self.x_axis,
+                        np.append(lower_q, upper_q),
+                        label="bathtub fit",
+                    )
                 plt.xlabel(f"time [{str(self.x_units)}]")
             else:
                 plt.title("Vertical cross section")
-                lower_q = to_q_scale(self.bathtub[sidx, :tidx], np.max(self.bathtub[sidx, :tidx]))
-                upper_q = to_q_scale(self.bathtub[sidx, tidx:], np.max(self.bathtub[sidx, tidx:]))
-                lower_q_raw = to_q_scale(self.raw_bathtub[sidx, :tidx], np.max(self.raw_bathtub[sidx, :tidx]))
-                upper_q_raw = to_q_scale(self.raw_bathtub[sidx, tidx:], np.max(self.raw_bathtub[sidx, tidx:]))
-                mv = np.max([np.max(lower_q), np.max(upper_q), np.max(lower_q_raw), np.max(upper_q_raw)])
-                plt.plot(
-                    self.y_axis,
-                    np.append(lower_q_raw, upper_q_raw),
-                    'r.',
-                    label="raw bathtub",
-                )
-                plt.plot(
-                    self.y_axis,
-                    np.append(lower_q, upper_q),
-                    label="bathtub fit",
-                )
+                for eye_idx, _tidx in enumerate(tidx):
+                    lower_q = to_q_scale(self.bathtub[sidx, :_tidx, eye_idx], np.max(self.bathtub[sidx, :_tidx, eye_idx]))
+                    upper_q = to_q_scale(self.bathtub[sidx, _tidx:, eye_idx], np.max(self.bathtub[sidx, _tidx:, eye_idx]))
+                    lower_q_raw = to_q_scale(self.raw_bathtub[sidx, :_tidx, eye_idx], np.max(self.raw_bathtub[sidx, :_tidx, eye_idx]))
+                    upper_q_raw = to_q_scale(self.raw_bathtub[sidx, _tidx:, eye_idx], np.max(self.raw_bathtub[sidx, _tidx:, eye_idx]))
+                    mv = np.max([np.max(lower_q), np.max(upper_q), np.max(lower_q_raw), np.max(upper_q_raw)])
+                    plt.plot(
+                        self.y_axis,
+                        np.append(lower_q_raw, upper_q_raw),
+                        'r.',
+                        label="raw bathtub",
+                    )
+                    plt.plot(
+                        self.y_axis,
+                        np.append(lower_q, upper_q),
+                        label="bathtub fit",
+                    )
                 plt.xlabel(f"signal [{str(self.y_units)}]")
             plt.ylim([0, np.min([mv, 7.9])])
             plt.gca().invert_yaxis()

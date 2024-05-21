@@ -15,7 +15,7 @@ Functions for analyzing time series waveforms prior to adding them to the
 """
 
 # assumes rise value bit is 0, fall value bit is 1
-OMA_FILTER_MAP = {
+FILTER_MAP_NRZ = {
     "xp": {
         "fbefore_rise": [0,],
         "fafter_rise": [1, 1],
@@ -32,6 +32,27 @@ OMA_FILTER_MAP = {
         "fbefore_rise": [0]*7,
         "fafter_rise": [1]*8,
         "fbefore_fall": [1]*7,
+        "fafter_fall": [0]*8
+    },
+}
+# assumes rise value bit is 0, fall value bit is 3
+FILTER_MAP_PAM4 = {
+    "xp": {
+        "fbefore_rise": [0,],
+        "fafter_rise": [3, 3],
+        "fbefore_fall": [3,],
+        "fafter_fall": [0, 0]
+    },
+    "4140": {
+        "fbefore_rise": [0]*3,
+        "fafter_rise": [3]*4,
+        "fbefore_fall": [3]*3,
+        "fafter_fall": [0]*4
+    },
+    "8180": {
+        "fbefore_rise": [0]*7,
+        "fafter_rise": [3]*8,
+        "fbefore_fall": [3]*7,
         "fafter_fall": [0]*8
     },
 }
@@ -55,15 +76,15 @@ def nrz_waveform_analysis(
     midpt_sampling_indices = (sampling_indices[1:] + sampling_indices[:-1]) / 2
     wvf_sampled_midpts = get_wvf_pts(midpt_sampling_indices, wvf)
     data = (wvf_sampled > initial_threshold).astype(int)
-    compute_zero_at_crossing(wvf_sampled_midpts, data, msmts, counts)
-    compute_one_at_crossing(wvf_sampled_midpts, data, msmts, counts)
+    compute_value_at_crossing(wvf_sampled_midpts, data, 0, "zero_level_xp", msmts, counts)
+    compute_value_at_crossing(wvf_sampled_midpts, data, 1, "one_level_xp", msmts, counts)
     msmts["threshold"] = 0.5 * (msmts["one_level_xp"] + msmts["zero_level_xp"])
     counts["threshold"] = min([counts["zero_level_xp"], counts["one_level_xp"]])
 
     # Re-compute data, one-level, and zero-level with newer sampling threshold
     data = (np.array(wvf_sampled) > msmts["threshold"]).astype(int)
-    compute_zero_at_crossing(wvf_sampled_midpts, data, msmts, counts)
-    compute_one_at_crossing(wvf_sampled_midpts, data, msmts, counts)
+    compute_value_at_crossing(wvf_sampled_midpts, data, 0, "zero_level_xp", msmts, counts)
+    compute_value_at_crossing(wvf_sampled_midpts, data, 1, "one_level_xp", msmts, counts)
     msmts["threshold"] = 0.5 * (msmts["one_level_xp"] + msmts["zero_level_xp"])
     counts["threshold"] = min([counts["zero_level_xp"], counts["one_level_xp"]])
 
@@ -82,40 +103,91 @@ def nrz_waveform_analysis(
     return msmts, counts
 
 
-@timer
-def compute_zero_at_crossing(
-    wvf_at_crossing: np.ndarray,
-    data: np.ndarray,
-    msmts: dict,
-    counts: dict,
-) -> None:
-    fb = np.array([0], dtype=int)
-    fa = np.array([], dtype=int)
-    zero_matches = filter(0, fbefore=fb, fafter=fa, data=data)[1:]
-    if np.sum(zero_matches) == 0:
-        msmts["zero_level_xp"], counts["zero_level_xp"] = np.nan, 0
-    else:
-        msmts["zero_level_xp"] = np.dot(zero_matches, wvf_at_crossing) / np.sum(
-            zero_matches
-        )
-        counts["zero_level_xp"] = np.sum(zero_matches)
+def pam4_waveform_analysis(
+    time: np.ndarray,
+    wvf: np.ndarray,
+    sampling_indices: np.ndarray,
+    initial_threshold_lower: float,
+    initial_threshold_middle: float,
+    initial_threshold_upper: float,
+    period: float,
+) -> Tuple[dict, dict]:
+    """
+    Perform all standard waveform measurements for a 4-level PAM signal
+    """
+    msmts = {}  # keep track of measured values
+    counts = {}  # keep track of # of measurements observed for each value
+
+    def determine_bits(sv: np.ndarray, t_lower: float, t_middle: float, t_upper: float) -> int:
+        data = np.zeros(len(sv), dtype=int)
+        data[(sv > t_lower) & (sv <= t_middle)] = 1
+        data[(sv > t_middle) & (sv <= t_upper)] = 2
+        data[sv > t_upper] = 3
+        return data
+    # Compute and store data amplitudes (wvf_s), and binary values (data)
+    wvf_sampled = get_wvf_pts(sampling_indices, wvf)
+
+    midpt_sampling_indices = (sampling_indices[1:] + sampling_indices[:-1]) / 2
+    wvf_sampled_midpts = get_wvf_pts(midpt_sampling_indices, wvf)
+    data = determine_bits(wvf_sampled, initial_threshold_lower, initial_threshold_middle, initial_threshold_upper)
+    for v, vstr in zip([0, 1, 2, 3], ["zero_level_xp", "one_level_xp", "two_level_xp", "three_level_xp"]):
+        compute_value_at_crossing(wvf_sampled_midpts, data, v, vstr, msmts, counts)
+    msmts["threshold_lower"] = 0.5 * (msmts["one_level_xp"] + msmts["zero_level_xp"])
+    counts["threshold_lower"] = min([counts["one_level_xp"], counts["zero_level_xp"]])
+    msmts["threshold"] = 0.5 * (msmts["two_level_xp"] + msmts["one_level_xp"])
+    counts["threshold"] = min([counts["two_level_xp"], counts["one_level_xp"]])
+    msmts["threshold_upper"] = 0.5 * (msmts["three_level_xp"] + msmts["two_level_xp"])
+    counts["threshold_upper"] = min([counts["three_level_xp"], counts["two_level_xp"]])
+
+    # Re-compute data, with newer sampling threshold
+    data = determine_bits(np.array(wvf_sampled), msmts["threshold_lower"], msmts["threshold"], msmts["threshold_upper"])
+    for v, vstr in zip([0, 1, 2, 3], ["zero_level_xp", "one_level_xp", "two_level_xp", "three_level_xp"]):
+        compute_value_at_crossing(wvf_sampled_midpts, data, v, vstr, msmts, counts)
+
+    # Compute the OMA with the current threshold estimates
+    sps = period / (time[1] - time[0])
+    compute_oma_outer(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts)
+    msmts["average"], counts["average"] = np.mean(wvf), len(wvf)
+
+    # Re-compute the thresholds using the OMA and average power (these need to be recomputed in a particular way for the TDECQ measurement later)
+    # See Eq. 121-1 through 121-3 in 802.3bs
+    msmts["threshold_lower"] = msmts["average"] - msmts["oma_outer"]/3
+    counts["threshold_lower"] = min([counts["average"], counts["oma_outer"]])
+    msmts["threshold"] = msmts["average"]
+    counts["threshold"] = counts["average"]
+    msmts["threshold_upper"] = msmts["average"] + msmts["oma_outer"]/3
+    counts["threshold_upper"] = min([counts["average"], counts["oma_outer"]])
+
+    msmts["oma_xp"] = msmts["three_level_xp"] - msmts["zero_level_xp"]
+    counts["oma_xp"] = min([counts["three_level_xp"], counts["zero_level_xp"]])
+    msmts["extinction_ratio_xp"] = 10 * np.log10(msmts["three_level_xp"] / msmts["zero_level_xp"])
+    counts["extinction_ratio_xp"] = counts["oma_xp"]
+
+    compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=8, format="PAM4")
+    compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=4, format="PAM4")
+    compute_edge_statistics(msmts, counts, time, wvf, sampling_indices, data, period, format="PAM4")
+    from pprint import pprint
+    pprint(msmts)
+    return msmts, counts
 
 
 @timer
-def compute_one_at_crossing(
+def compute_value_at_crossing(
     wvf_at_crossing: np.ndarray,
     data: np.ndarray,
+    value: int,
+    value_str: str,
     msmts: dict,
     counts: dict,
 ) -> None:
-    fb = np.array([1], dtype=int)
+    fb = np.array([value], dtype=int)
     fa = np.array([], dtype=int)
-    one_matches = filter(1, fbefore=fb, fafter=fa, data=data)[1:]
-    if np.sum(one_matches) == 0:
-        msmts["one_level_xp"], counts["one_level_xp"] = np.nan, 0
+    matches = filter(int(value), fbefore=fb, fafter=fa, data=data)[1:]
+    if np.sum(matches) == 0:
+        msmts[value_str], counts[value_str] = np.nan, 0
     else:
-        msmts["one_level_xp"] = np.dot(one_matches, wvf_at_crossing) / np.sum(one_matches)
-        counts["one_level_xp"] = np.sum(one_matches)
+        msmts[value_str] = np.dot(matches, wvf_at_crossing) / np.sum(matches)
+        counts[value_str] = np.sum(matches)
 
 
 @timer
@@ -128,6 +200,7 @@ def compute_x1x0_oma(
     msmts: dict,
     counts: dict,
     pattern_length: int,
+    format: str = "NRZ",
 ) -> None:
     """
     Compute the OMA for a given pattern length.  This shall be computed in a way consistent with
@@ -152,11 +225,16 @@ def compute_x1x0_oma(
     pstr = f"{pattern_length}1{pattern_length}0"
     oma_key = "oma_" + pstr
     zero_key = "zero_level_" + pstr
-    one_key = "one_level_" + pstr
     er_key = "extinction_ratio_" + pstr
+    if format == "NRZ":
+        one_key = "one_level_" + pstr
+        one_value = 1
+    else:  # PAM4
+        one_key = "three_level_" + pstr
+        one_value = 3
     one_matches = filter(
-        1,
-        fbefore=np.array([1] * (pattern_length - 1), dtype=int),
+        one_value,
+        fbefore=np.array([one_value] * (pattern_length - 1), dtype=int),
         fafter=np.array([], dtype=int),
         data=data,
     )
@@ -169,17 +247,6 @@ def compute_x1x0_oma(
     one_matches = np.asarray(one_matches).astype(bool)
     zero_matches = np.asarray(zero_matches).astype(bool)
     wvf_sampled = np.asarray(wvf_sampled)
-
-    # Find all sections of ones and zeros of length >= pattern_length.
-    # First group into contiguous sections (results of filter() can overlap)
-    def get_contiguous_segments(matches):
-        segment_start, segment_stop = [], []
-        for i, _ in enumerate(matches[1:-1]):
-            if matches[i-1]==False and matches[i]==True:
-                segment_start += [i]
-            if matches[i]==True and matches[i+1]==False:
-                segment_stop += [i]
-        return segment_start, segment_stop, min([len(segment_start), len(segment_stop)])
     
     one_segment_starts, one_segment_stops, num_one_segments = get_contiguous_segments(one_matches)
     zero_segment_starts, zero_segment_stops, num_zero_segments = get_contiguous_segments(zero_matches)
@@ -202,7 +269,7 @@ def compute_x1x0_oma(
         stop_idx_center_20 = round(start_idx + 0.6 * (stop_idx - start_idx))
         zero_values += wvf[start_idx_center_20:stop_idx_center_20].tolist()
 
-    if (num_one_segments== 0) or (num_zero_segments == 0):
+    if (num_one_segments == 0) or (num_zero_segments == 0):
         msmts[oma_key], counts[oma_key] = np.nan, 0
         msmts[one_key], counts[one_key] = np.nan, 0
         msmts[zero_key], counts[zero_key] = np.nan, 0
@@ -223,6 +290,106 @@ def compute_x1x0_oma(
 
 
 @timer
+def compute_oma_outer(
+    wvf_sampled: np.ndarray,
+    data: np.ndarray,
+    wvf: np.ndarray, 
+    sampling_indices: np.ndarray,
+    sps: float,
+    msmts: dict,
+    counts: dict,
+):
+    """
+    Compute the outer OMA for a PAM4 signal.  This shall be computed in a way consistent with
+    Section 121.8.4 - Optical Modulation Amplitude (OMA) from IEEE 802.3bs-2017
+
+    'The OMAouter of each lane shall be within the limits given in Table 121–6. The OMAouter is 
+    measured using a test pattern specified for OMAouter in Table 121–10 as the difference 
+    between the average optical launch power level P3, measured over the central 2 UI of a run 
+    of 7 threes, and the average optical launch power level P0, measured over the central 2 UI 
+    of a run of 6 zeros, as shown in Figure 121–3.'
+
+    It is assumed that for a proper oma_outer measurement, the input signal test pattern is either
+    SSPRQ or PRBS13Q, as specified in Table 124-9 of "Test Patterns".
+
+    Also computes the extinction ratio and average power.
+    """
+    oma_key = "oma_outer"
+    zero_key = "zero_level_outer"
+    three_key = "three_level_outer"
+    er_key = "extinction_ratio_outer"
+    pattern_length_three = 7
+    pattern_length_zero = 6
+    three_matches = filter(
+        3,
+        fbefore=np.array([3] * (pattern_length_three - 1), dtype=int),
+        fafter=np.array([], dtype=int),
+        data=data,
+    )
+    zero_matches = filter(
+        0,
+        fbefore=np.array([0] * (pattern_length_zero - 1), dtype=int),
+        fafter=np.array([], dtype=int),
+        data=data,
+    )
+    three_matches = np.asarray(three_matches).astype(bool)
+    zero_matches = np.asarray(zero_matches).astype(bool)
+    wvf_sampled = np.asarray(wvf_sampled)
+    
+    # Find all sections of data of length >= pattern_length.
+    # First group into contiguous sections (results of filter() can overlap)
+    three_segment_starts, three_segment_stops, num_three_segments = get_contiguous_segments(three_matches)
+    zero_segment_starts, zero_segment_stops, num_zero_segments = get_contiguous_segments(zero_matches)
+
+    three_values = []
+    for i in range(num_three_segments):
+        start_idx = sampling_indices[three_segment_starts[i]] - (pattern_length_three - 0.5)*sps
+        stop_idx = sampling_indices[three_segment_stops[i]] + 0.5*sps
+
+        start_idx_center_2UI = round(start_idx + sps * (pattern_length_three - 2) / 2)
+        stop_idx_center_2UI = round(stop_idx - sps * (pattern_length_three - 2) / 2)
+        three_values += wvf[start_idx_center_2UI:stop_idx_center_2UI].tolist()
+
+    zero_values = []
+    for i in range(num_zero_segments):
+        start_idx = sampling_indices[zero_segment_starts[i]] - (pattern_length_zero - 0.5)*sps
+        stop_idx = sampling_indices[zero_segment_stops[i]] + 0.5*sps
+
+        start_idx_center_2UI = round(start_idx + sps * (pattern_length_zero - 2) / 2)
+        stop_idx_center_2UI = round(stop_idx - sps * (pattern_length_zero - 2) / 2)
+        zero_values += wvf[start_idx_center_2UI:stop_idx_center_2UI].tolist()
+
+    if (num_three_segments == 0) or (num_zero_segments == 0):
+        msmts[oma_key], counts[oma_key] = np.nan, 0
+        msmts[three_key], counts[three_key] = np.nan, 0
+        msmts[zero_key], counts[zero_key] = np.nan, 0
+        msmts[er_key], counts[er_key] = np.nan, 0
+    else:
+        p0, p3 = np.mean(zero_values), np.mean(three_values)
+        msmts[zero_key] = p0
+        counts[zero_key] = num_zero_segments
+        msmts[three_key] = p3
+        counts[three_key] = num_three_segments
+        msmts[oma_key] = p3 - p0
+        counts[oma_key] = min([num_zero_segments, num_three_segments])
+        if p0 == 0:
+            msmts[er_key] = np.nan
+        else:
+            msmts[er_key] = 10 * np.log10(p3 / p0)
+        counts[er_key] = counts[oma_key]
+
+
+def get_contiguous_segments(matches):
+    segment_start, segment_stop = [], []
+    for i, _ in enumerate(matches[1:-1]):
+        if matches[i-1]==False and matches[i]==True:
+            segment_start += [i]
+        if matches[i]==True and matches[i+1]==False:
+            segment_stop += [i]
+    return segment_start, segment_stop, min([len(segment_start), len(segment_stop)])
+    
+
+@timer
 def compute_edge_statistics(
     msmts: dict,
     counts: dict,
@@ -231,12 +398,22 @@ def compute_edge_statistics(
     sampling_indices: np.ndarray,
     data: np.ndarray,
     period: float,
+    format: str = "NRZ"
 ):
     for oma_type in ["xp", "4140", "8180"]:
+        if format == "NRZ":
+            FILTER_MAP = FILTER_MAP_NRZ
+            zero_level, one_level = 0, 1
+            zero_level_key, one_level_key = f"zero_level_{oma_type}", f"one_level_{oma_type}"
+        else:  # PAM4
+            zero_level_key, one_level_key = f"zero_level_{oma_type}", f"three_level_{oma_type}"
+            FILTER_MAP = FILTER_MAP_PAM4
+            zero_level, one_level = 0, 3
+
         edge_matches_rise = filter(
-            0, 
-            fbefore=np.array(OMA_FILTER_MAP[oma_type]["fbefore_rise"], dtype=int), 
-            fafter=np.array(OMA_FILTER_MAP[oma_type]["fafter_rise"], dtype=int), 
+            zero_level, 
+            fbefore=np.array(FILTER_MAP[oma_type]["fbefore_rise"], dtype=int), 
+            fafter=np.array(FILTER_MAP[oma_type]["fafter_rise"], dtype=int), 
             data=data,
         )
         rising_edge_50, rising_counts = compute_abs_edge_time(
@@ -248,9 +425,9 @@ def compute_edge_statistics(
             period=period,
         )
         edge_matches_fall = filter(
-            1, 
-            fbefore=np.array(OMA_FILTER_MAP[oma_type]["fbefore_fall"], dtype=int), 
-            fafter=np.array(OMA_FILTER_MAP[oma_type]["fafter_fall"], dtype=int), 
+            one_level, 
+            fbefore=np.array(FILTER_MAP[oma_type]["fbefore_fall"], dtype=int), 
+            fafter=np.array(FILTER_MAP[oma_type]["fafter_fall"], dtype=int), 
             data=data,
         )
         falling_edge_50, falling_counts = compute_abs_edge_time(
@@ -327,7 +504,7 @@ def compute_edge_statistics(
             msmts[f"abs_overshoot_time_{oma_type}"], counts[f"abs_overshoot_time_{oma_type}"] = np.nan, 0
         else:
             msmts[f"overshoot_percentage_{oma_type}"] = (
-                100 * (over_y - msmts[f"one_level_{oma_type}"]) / msmts[f"oma_{oma_type}"]
+                100 * (over_y - msmts[one_level_key]) / msmts[f"oma_{oma_type}"]
             )
             counts[f"overshoot_percentage_{oma_type}"] = min([rising_counts, over_counts])
             msmts[f"abs_overshoot_time_{oma_type}"] = over_t - t_center
@@ -346,7 +523,7 @@ def compute_edge_statistics(
             msmts[f"abs_undershoot_time_{oma_type}"], counts[f"abs_undershoot_time_{oma_type}"] = np.nan, 0
         else:
             msmts[f"undershoot_percentage_{oma_type}"] = (
-                100 * (msmts[f"zero_level_{oma_type}"] - under_y) / msmts[f"oma_{oma_type}"]
+                100 * (msmts[zero_level_key] - under_y) / msmts[f"oma_{oma_type}"]
             )
             counts[f"undershoot_percentage_{oma_type}"] = min([rising_counts, under_counts])
             msmts[f"abs_undershoot_time_{oma_type}"] = under_t - t_center

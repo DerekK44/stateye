@@ -24,7 +24,7 @@ def to_ber_scale(q: Union[np.ndarray, float], rho_t: float):
     return rho_t * (1 - erf(q / np.sqrt(2)))
 
 
-def generate_vertical_bathtub(
+def generate_vertical_bathtub_nrz(
     hist: np.ndarray,
     bathtub: np.ndarray,
     raw_bathtub: np.ndarray,
@@ -43,7 +43,7 @@ def generate_vertical_bathtub(
         transition_density = pattern_counts[i] / np.sum(pattern_counts)
         for sidx in range(hist.shape[0]):
             if bit_value == 0:  # 0-level
-                bathtub[sidx, :] += np.flip(
+                bathtub[sidx, :, 0] += np.flip(
                     q_scale_fit(
                         input_scale=np.flip(y_scale),
                         hist1d=np.flip(hist2d[sidx, :]),
@@ -53,9 +53,9 @@ def generate_vertical_bathtub(
                 )
                 cdf = np.cumsum(np.flip(hist2d[sidx, :]))
                 cdf *= transition_density / np.max(cdf)
-                raw_bathtub[sidx, :] += np.roll(np.flip(cdf), roll_idx)
+                raw_bathtub[sidx, :, 0] += np.roll(np.flip(cdf), roll_idx)
             elif bit_value == 1:  # 1-level
-                bathtub[sidx, :] += q_scale_fit(
+                bathtub[sidx, :, 0] += q_scale_fit(
                     input_scale=y_scale,
                     hist1d=hist2d[sidx, :],
                     rho_t=transition_density,
@@ -63,9 +63,69 @@ def generate_vertical_bathtub(
                 )
                 cdf = np.cumsum(hist2d[sidx, :])
                 cdf *= transition_density / np.max(cdf)
-                raw_bathtub[sidx, :] += np.roll(cdf, -roll_idx)
+                raw_bathtub[sidx, :, 0] += np.roll(cdf, -roll_idx)
             else:
-                raise NotImplementedError("PAM4 not yet supported :(")
+                raise NotImplementedError("ERROR: `bit_value` must be either 0 or 1.")
+            
+
+def generate_vertical_bathtub_pam4(
+    hist: np.ndarray,
+    bathtub: np.ndarray,
+    raw_bathtub: np.ndarray,
+    pattern_indices: np.ndarray,
+    pattern_counts: np.ndarray,
+    data_values: np.ndarray,
+    y_scale: np.ndarray,
+) -> np.ndarray:
+    bathtub[:] = 0.0  # re-initialize to zero
+    raw_bathtub[:] = 0.0  # re-initialize to zero
+    for eye_idx in range(bathtub.shape[2]):
+        for i, idx in tqdm(enumerate(pattern_indices)):
+            hist2d = hist[:, :, idx]
+            bit_value = data_values[idx]
+            transition_density = pattern_counts[i] / np.sum(pattern_counts)
+            for sidx in range(hist.shape[0]):
+                # Determine whether to integrate upwards or downwards, depending on
+                # which eye we are considering and the bit
+                if bit_value == 0:
+                    integrate_down = True  # regardless of which eye
+                elif bit_value == 1:
+                    if eye_idx == 0:
+                        integrate_down = False
+                    else:
+                        integrate_down = True
+                elif bit_value == 2:
+                    if eye_idx == 2:
+                        integrate_down = True
+                    else:
+                        integrate_down = False
+                elif bit_value == 3:
+                    integrate_down = False
+                else:
+                    raise NotImplementedError("ERROR: `bit_value` must be either 0, 1, 2, or 3.")
+
+                if integrate_down:
+                    bathtub[sidx, :, eye_idx] += np.flip(
+                        q_scale_fit(
+                            input_scale=np.flip(y_scale),
+                            hist1d=np.flip(hist2d[sidx, :]),
+                            rho_t=transition_density,
+                            mean_shift=0,
+                        )
+                    )
+                    cdf = np.cumsum(np.flip(hist2d[sidx, :]))
+                    cdf *= transition_density / np.max(cdf)
+                    raw_bathtub[sidx, :, eye_idx] += np.flip(cdf)
+                else:  # integrate upwards
+                    bathtub[sidx, :, eye_idx] += q_scale_fit(
+                        input_scale=y_scale,
+                        hist1d=hist2d[sidx, :],
+                        rho_t=transition_density,
+                        mean_shift=0,
+                    )
+                    cdf = np.cumsum(hist2d[sidx, :])
+                    cdf *= transition_density / np.max(cdf)
+                    raw_bathtub[sidx, :, eye_idx] += cdf
 
 
 def q_scale_fit(

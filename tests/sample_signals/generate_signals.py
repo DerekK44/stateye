@@ -51,8 +51,15 @@ def generate_data_with_filtered_noise(
     dt_sec: float,
     bw_3db_Hz: float,
     npoles: int,
+    format: str = "NRZ",
 ):
-    bits = np.random.choice([0.0, amplitude], nbits)
+    if format == "NRZ":
+        bits = np.random.choice([0.0, amplitude], nbits)
+    elif format == "PAM4":
+        bits = np.random.choice([0.0, amplitude/3, 2*amplitude/3, amplitude], nbits)
+    else:
+        raise ValueError(f"Unexpected argument for 'format' provided: {format}")
+    
     wvf = np.repeat(bits, samples_per_symbol)
     time = dt_sec * np.arange(len(wvf))
 
