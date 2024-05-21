@@ -189,7 +189,6 @@ def compute_stats_from_nrz_bathtub(d: dict) -> dict:
 def compute_stats_from_pam4_bathtub(d: dict) -> dict:
     v = {}
     v["vertical_ser"] = sum([d["bathtub"][d["sidx"], d[tidx], i] for i, tidx in enumerate(["tidx1", "tidx2", "tidx3"])])
-    input([d["bathtub"][d["sidx"], d[tidx], :] for i, tidx in enumerate(["tidx1", "tidx2", "tidx3"])])
     return v
 
 def Q(x):
