@@ -2,6 +2,7 @@ import numpy as np
 import math
 from scipy.signal import butter
 from scipy.signal import freqs as gen_freqs
+from typing import Optional, Iterable
 
 
 def generate_half_sine_data(
@@ -52,6 +53,7 @@ def generate_data_with_filtered_noise(
     bw_3db_Hz: float,
     npoles: int,
     format: str = "NRZ",
+    bit_pattern: Optional[Iterable] = None,
 ):
     if format == "NRZ":
         bits = np.random.choice([0.0, amplitude], nbits)
@@ -59,6 +61,9 @@ def generate_data_with_filtered_noise(
         bits = np.random.choice([0.0, amplitude/3, 2*amplitude/3, amplitude], nbits)
     else:
         raise ValueError(f"Unexpected argument for 'format' provided: {format}")
+    
+    if bit_pattern is not None:
+        bits = bit_pattern
     
     wvf = np.repeat(bits, samples_per_symbol)
     time = dt_sec * np.arange(len(wvf))
