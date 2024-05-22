@@ -166,8 +166,6 @@ def pam4_waveform_analysis(
     compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=8, format="PAM4")
     compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=4, format="PAM4")
     compute_edge_statistics(msmts, counts, time, wvf, sampling_indices, data, period, format="PAM4")
-    from pprint import pprint
-    pprint(msmts)
     return msmts, counts
 
 
