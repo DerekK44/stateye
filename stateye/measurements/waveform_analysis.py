@@ -90,8 +90,12 @@ def nrz_waveform_analysis(
 
     msmts["oma_xp"] = msmts["one_level_xp"] - msmts["zero_level_xp"]
     counts["oma_xp"] = counts["threshold"]
-    msmts["extinction_ratio_xp"] = 10 * np.log10(msmts["one_level_xp"] / msmts["zero_level_xp"])
-    counts["extinction_ratio_xp"] = counts["oma_xp"]
+    if (msmts["one_level_xp"] > 0) and (msmts["zero_level_xp"] > 0):
+        msmts["extinction_ratio_xp"] = 10 * np.log10(msmts["one_level_xp"] / msmts["zero_level_xp"])
+        counts["extinction_ratio_xp"] = counts["oma_xp"]
+    else:
+        msmts["extinction_ratio_xp"] = np.nan
+        counts["extinction_ratio_xp"] = 0
 
     msmts["average"], counts["average"] = np.mean(wvf), len(wvf)
 
@@ -160,8 +164,12 @@ def pam4_waveform_analysis(
 
     msmts["oma_xp"] = msmts["three_level_xp"] - msmts["zero_level_xp"]
     counts["oma_xp"] = min([counts["three_level_xp"], counts["zero_level_xp"]])
-    msmts["extinction_ratio_xp"] = 10 * np.log10(msmts["three_level_xp"] / msmts["zero_level_xp"])
-    counts["extinction_ratio_xp"] = counts["oma_xp"]
+    if (msmts["one_level_xp"] > 0) and (msmts["zero_level_xp"] > 0):
+        msmts["extinction_ratio_xp"] = 10 * np.log10(msmts["three_level_xp"] / msmts["zero_level_xp"])
+        counts["extinction_ratio_xp"] = counts["oma_xp"]
+    else:
+        msmts["extinction_ratio_xp"] = np.nan
+        counts["extinction_ratio_xp"] = 0
 
     compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=8, format="PAM4")
     compute_x1x0_oma(wvf_sampled, data, wvf, sampling_indices, sps, msmts, counts, pattern_length=4, format="PAM4")
