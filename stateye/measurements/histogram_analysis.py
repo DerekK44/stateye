@@ -103,13 +103,34 @@ def pam4_histogram_analysis(
     msmts["d_lev"] = compute_d_lev(hist_data, sargs)
     counts["d_lev"] = pattern_counts
 
-    tdec_R = compute_tdecq_r(sargs, msmts, tdecq_s_noise, tdecq_ceq, tdecq_BER)
+    tdec_R_outer = compute_tdecq_r(sargs, msmts, msmts["oma_outer"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
+    tdec_R_xp = compute_tdecq_r(sargs, msmts, msmts["oma_xp"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
     Qt = 3.414  # TODO: compute this explicitly.
-    msmts["tdecq_outer"] = 10*np.log10((msmts["oma_outer"]/6) * (1 / (Qt * tdec_R)))
+    msmts["tdecq_outer"] = 10*np.log10((msmts["oma_outer"]/6) * (1 / (Qt * tdec_R_outer)))
+    msmts["tdecq_xp"] = 10*np.log10((msmts["oma_xp"]/6) * (1 / (Qt * tdec_R_xp)))
+
+    compute_symbol_level_mse(sargs, msmts, 0, sargs["tidx1"], "zero_level_mse")
+    compute_symbol_level_mse(sargs, msmts, sargs["tidx1"], sargs["tidx2"], "one_level_mse")
+    compute_symbol_level_mse(sargs, msmts, sargs["tidx2"], sargs["tidx3"], "two_level_mse")
+    compute_symbol_level_mse(sargs, msmts, sargs["tidx3"], hist_data.shape[1], "three_level_mse")
 
 @timer
 def compute_d_lev(hist_data: np.ndarray, d: dict) -> float:
     return [np.dot(hist_data[d["sidx"], :, zi], d["y"])/np.sum(hist_data[d["sidx"], :, zi]) for zi in range(hist_data.shape[2])]
+
+@timer
+def compute_symbol_level_mse(
+    d: dict, 
+    msmts: dict, 
+    t_lower: int,
+    t_upper: int,
+    level_name: str,
+):
+    h = d["hd"][d["sidx"], t_lower : t_upper]
+    y = d["y"][t_lower : t_upper]
+    level_mean = np.dot(h, y) / np.sum(h)
+    level_mse = np.sum(h * ((y - level_mean)) ** 2) / np.sum(h)
+    msmts.update({level_name: level_mse})
 
 @timer
 def compute_inner_eye_height(d: dict) -> float:
@@ -254,6 +275,7 @@ def compute_tdec_r(
 def compute_tdecq_r(
     d: dict, 
     msmts: dict, 
+    oma: float,
     S: float,
     Ceq: float,
     TARGET_BER: float,
@@ -269,9 +291,9 @@ def compute_tdecq_r(
     idx = np.arange(len(ui))
     W = 0.04
     TARGET_SER = TARGET_BER * 2
-    Pth1 = msmts["average"] - msmts["oma_outer"]/3
+    Pth1 = msmts["average"] - oma/3
     Pth2 = msmts["average"]
-    Pth3 = msmts["average"] + msmts["oma_outer"]/3
+    Pth3 = msmts["average"] + oma/3
 
     hist = {}
     sigmas = []
@@ -310,7 +332,7 @@ def compute_tdecq_r(
             ser3 = np.dot(hist["CF_"+side+"_3"], G(d["y"], sigma_G, Pth3))
             return ser1 + ser2 + ser3
 
-        sigma_guess = msmts["oma_outer"]/3/10
+        sigma_guess = oma/3/10
         sol = root(lambda sigma: (np.log10(get_ser(abs(sigma))) - np.log10(TARGET_SER)), x0=sigma_guess, tol=1e-6)
         sigmas.append(abs(sol.x[0]))
 

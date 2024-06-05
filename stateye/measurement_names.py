@@ -88,6 +88,8 @@ MEASUREMENTS = {
     "tdec_xp": (float, None),
     "tdec_4140": (float, None),
     "tdec_8180": (float, None),
+    "tdecq_outer": (float, None),
+    "tdecq_xp": (float, None),
     "inner_eye_height": (float, "y"),
     "inner_eye_width": (float, "t"),
     "overshoot_percentage_xp": (float, None),
@@ -142,6 +144,10 @@ MEASUREMENTS = {
     "lower_eye_width_1e-12": (float, "t"),
     "lower_eye_width_1e-15": (float, "t"),
     "d_lev": (list, "y"),
+    "zero_level_mse": (float, "y"),
+    "one_level_mse": (float, "y"),
+    "two_level_mse": (float, "y"),
+    "three_level_mse": (float, "y"),
 }
 
 # Statistically averaged quantities below
