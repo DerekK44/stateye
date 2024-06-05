@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.special import erfinv, erf
 from typing import Union
-from tqdm import tqdm
 import math
 
 """
@@ -37,7 +36,7 @@ def generate_vertical_bathtub_nrz(
     bathtub[:] = 0.0  # re-initialize to zero
     raw_bathtub[:] = 0.0  # re-initialize to zero
     roll_idx = int(round((sensitivity / 2) / (y_scale[1] - y_scale[0])))
-    for i, idx in tqdm(enumerate(pattern_indices)):
+    for i, idx in enumerate(pattern_indices):
         hist2d = hist[:, :, idx]
         bit_value = data_values[idx]
         transition_density = pattern_counts[i] / np.sum(pattern_counts)
@@ -80,7 +79,7 @@ def generate_vertical_bathtub_pam4(
     bathtub[:] = 0.0  # re-initialize to zero
     raw_bathtub[:] = 0.0  # re-initialize to zero
     for eye_idx in range(bathtub.shape[2]):
-        for i, idx in tqdm(enumerate(pattern_indices)):
+        for i, idx in enumerate(pattern_indices):
             hist2d = hist[:, :, idx]
             bit_value = data_values[idx]
             transition_density = pattern_counts[i] / np.sum(pattern_counts)
