@@ -31,4 +31,7 @@ METADATA = (
     "tdec_m1",
     "tdec_m2",
     "tdec_ber",
+    "tdecq_s_noise",
+    "tdecq_ceq",
+    "tdecq_ser"
 )

@@ -157,7 +157,7 @@ class Eye:
 
         self.tdecq_s_noise = 0.0
         self.tdecq_ceq = 1.0
-        self.tdecq_ber = 4.56e-4  # 1.6TBASE DR8 value from 802.3dj D2.1 is the default here.
+        self.tdecq_ser = 4.56e-4  # Symbol error rate.  1.6TBASE DR8 value from 802.3dj D2.1 is the default here.
 
     @abstractmethod
     def add_data(self):
@@ -538,7 +538,7 @@ class Eye:
                     self.pattern_counts,
                     self.tdecq_s_noise,
                     self.tdecq_ceq,
-                    self.tdecq_ber,
+                    self.tdecq_ser,
                 )
             self.__compute_histogram_analysis = False
         return self.__msmts
@@ -586,6 +586,18 @@ class Eye:
 
     def set_tdec_ber(self, ber: float) -> None:
         self.tdec_ber = float(ber)
+        self.__compute_histogram_analysis = True
+
+    def set_tdecq_s_noise(self, s: float) -> None:
+        self.tdecq_s_noise = float(s)
+        self.__compute_histogram_analysis = True
+
+    def set_tdecq_ceq(self, ceq: float) -> None:
+        self.tdecq_ceq = float(ceq)
+        self.__compute_histogram_analysis = True
+
+    def set_tdecq_ser(self, ser: float) -> None:
+        self.tdecq_ser = float(ser)
         self.__compute_histogram_analysis = True
 
     def optimize_sampling_time(self, ber: float = 1e-12, max_offset_ui: float = 0.3) -> None:
