@@ -1,5 +1,6 @@
 import numpy as np
 from .timer import timer
+from .bathtub import to_q_scale
 from scipy.special import erfc
 from scipy.optimize import root
 from functools import lru_cache
@@ -105,7 +106,13 @@ def pam4_histogram_analysis(
 
     tdec_R_outer = compute_tdecq_r(sargs, msmts, msmts["oma_outer"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
     tdec_R_xp = compute_tdecq_r(sargs, msmts, msmts["oma_xp"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
-    Qt = 3.414  # TODO: compute this explicitly.
+    
+    # Calculate Qt on the fly.  Sanity check:
+    #     4.8e-4 SER => 3.414 Qt (used in 802.3-2022, for 100G/lane standards)
+    #     4.56e-4 SER => 3.428 Qt (used in 802.3dj FR4-500, 1.6T-DR8)
+    #     9.6e-3 SER => 2.489 Qt (used in 802.3dj 1.6T-DR8-2, FR4, LR4 with inner FEC)
+    Qt = to_q_scale(tdecq_BER, rho_t=0.75)
+
     msmts["tdecq_outer"] = 10*np.log10((msmts["oma_outer"]/6) * (1 / (Qt * tdec_R_outer)))
     msmts["tdecq_xp"] = 10*np.log10((msmts["oma_xp"]/6) * (1 / (Qt * tdec_R_xp)))
 
