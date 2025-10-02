@@ -157,7 +157,7 @@ class Eye:
 
         self.tdecq_s_noise = 0.0
         self.tdecq_ceq = 1.0
-        self.tdecq_ber = 2.4e-4
+        self.tdecq_ber = 4.56e-4  # 1.6TBASE DR8 value from 802.3dj D2.1 is the default here.
 
     @abstractmethod
     def add_data(self):
@@ -651,7 +651,7 @@ class Eye:
             hist = np.sum(hist, axis=2)
         else:
             if pattern not in self.data_patterns:
-                raise ValueError(f"patter {pattern} not in data patterns: {self.data_patterns}")
+                raise ValueError(f"pattern {pattern} not in data patterns: {self.data_patterns}")
             hist = hist[:, :, self.data_patterns.index(pattern)]
 
         hist[hist < 1e-1] = 1e-2
