@@ -202,15 +202,15 @@ class Eye:
         else:
             self.y_axis = np.arange(self.ymin - 1e-6, self.ymax + 1e-6, 1e-7)
 
-        # Initialize some of the measurement parameters
+        # PAM-4 eye thresholds (first guess, assumes equal probabilities of all data levels)
         self.threshold_initialized = False
-        self.threshold = np.mean(_wvf)  # will be updated later from the first waveform
+        V0, V1, V2, V3 = np.percentile(_wvf, [12.5, 37.5, 62.5, 87.5])  # will be updated again later from the first waveform
+        self.threshold_lower = 0.5 * (V0 + V1)
+        self.threshold = 0.5 * (V1 + V2)
+        self.threshold_upper = 0.5 * (V2 + V3)
+
         self.ymax_plot = self.threshold
         self.ymin_plot = self.threshold
-        
-        # PAM-4 eye thresholds (first guess)
-        self.threshold_lower = (np.min(_wvf) + self.threshold) / 2
-        self.threshold_upper = (self.threshold + np.max(_wvf)) / 2
 
         # Create file to dump eye to
         if self.dump_to_hdf5:
@@ -645,6 +645,8 @@ class Eye:
         ber_thresholds: List[float] = [],
         bw: bool = False,
         pattern: Optional[List[int]] = None,
+        vmax: Optional[float] = None,
+        cmap: str = "jet",
     ) -> plt.Figure:
         """
         Eye plotting function
@@ -670,10 +672,13 @@ class Eye:
 
         if not bw:
             _cmap = copy.copy(
-                matplotlib.cm.get_cmap("inferno")
+                matplotlib.cm.get_cmap(cmap),
             )  # was "coolwarm" before
             _cmap.set_under("k")
-            norm = matplotlib.colors.LogNorm(vmin=0.1)
+            if vmax is not None:
+                norm = matplotlib.colors.Normalize(vmin=0.1, vmax=vmax)
+            else:
+                norm = matplotlib.colors.Normalize(vmin=0.1)
         else:
             _cmap = copy.copy(matplotlib.cm.get_cmap("Greys"))
             _cmap.set_under("w")
