@@ -199,6 +199,22 @@ In the above:
 - BER is the target bit error rate for the link
 
 
+### A note on TDECQ
+
+Transmitter dispersion and eye closure quarternary (TDECQ) for PAM-4 waveforms is implemented according to IEEE Std 802.3-2022 and requires a few values from the user in order to be specified properly:
+
+```python
+eye = IdealEye( ... )
+eye.set_tdecq_s_noise(s)
+eye.set_tdecq_ceq(ceq)
+eye.set_tdec_ser(4.56e-4)
+```
+In the above:
+- S is the standard deviation of the noise of the O/E and oscilloscope combination.  This needs to be in the base units for the y-direction of the eye (volts).
+- Ceq is the reference receiver noise enhancement factor.  Equation (121-9) from section 121.8.5.3 in 802.3-2022.
+- SER is the target PAM-4 symbol error rate for the link
+
+
 # Bath tub plots
 
 `stateye` automatically constructs the bathtub plot (eye diagram integrated upwards for ones and downwards for zeros).  Internally there are two bathtubs:
