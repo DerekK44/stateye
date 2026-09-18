@@ -75,7 +75,7 @@ def pam4_histogram_analysis(
     pattern_counts: np.ndarray,
     tdecq_s_noise: float,
     tdecq_ceq: float,
-    tdecq_BER: float,
+    tdecq_SER: float,
 ) -> dict:
     sargs = {
         "hd": np.sum(hist_data, axis=2),
@@ -100,21 +100,25 @@ def pam4_histogram_analysis(
     Perform standard histogram measurements for a PAM4 signal
     """
     msmts.update(compute_stats_from_pam4_bathtub(sargs))
+
+    msmts["threshold"] = threshold
+    msmts["threshold_lower"] = threshold_lower
+    msmts["threshold_upper"] = threshold_upper
     
     msmts["d_lev"] = compute_d_lev(hist_data, sargs)
     counts["d_lev"] = pattern_counts
 
-    tdec_R_outer = compute_tdecq_r(sargs, msmts, msmts["oma_outer"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
-    tdec_R_xp = compute_tdecq_r(sargs, msmts, msmts["oma_xp"], tdecq_s_noise, tdecq_ceq, tdecq_BER)
+    tdecq_R_outer = compute_tdecq_r(sargs, msmts, msmts["oma_outer"], tdecq_s_noise, tdecq_ceq, tdecq_SER)
+    tdecq_R_xp = compute_tdecq_r(sargs, msmts, msmts["oma_xp"], tdecq_s_noise, tdecq_ceq, tdecq_SER)
     
     # Calculate Qt on the fly.  Sanity check:
     #     4.8e-4 SER => 3.414 Qt (used in 802.3-2022, for 100G/lane standards)
     #     4.56e-4 SER => 3.428 Qt (used in 802.3dj FR4-500, 1.6T-DR8)
     #     9.6e-3 SER => 2.489 Qt (used in 802.3dj 1.6T-DR8-2, FR4, LR4 with inner FEC)
-    Qt = to_q_scale(tdecq_BER, rho_t=0.75)
+    Qt = to_q_scale(tdecq_SER, rho_t=0.75)
 
-    msmts["tdecq_outer"] = 10*np.log10((msmts["oma_outer"]/6) * (1 / (Qt * tdec_R_outer)))
-    msmts["tdecq_xp"] = 10*np.log10((msmts["oma_xp"]/6) * (1 / (Qt * tdec_R_xp)))
+    msmts["tdecq_outer"] = 10*np.log10((msmts["oma_outer"]/6) * (1 / (Qt * tdecq_R_outer)))
+    msmts["tdecq_xp"] = 10*np.log10((msmts["oma_xp"]/6) * (1 / (Qt * tdecq_R_xp)))
 
     compute_symbol_level_mse(sargs, msmts, 0, sargs["tidx1"], "zero_level_mse")
     compute_symbol_level_mse(sargs, msmts, sargs["tidx1"], sargs["tidx2"], "one_level_mse")
@@ -285,7 +289,7 @@ def compute_tdecq_r(
     oma: float,
     S: float,
     Ceq: float,
-    TARGET_BER: float,
+    TARGET_SER: float,
 ) -> float:
     """
     Compute the noise that could be added by a receiver, as detailed in Equation (121-11)
@@ -297,7 +301,6 @@ def compute_tdecq_r(
     ui = d["x"] / (max(d["x"]) + d["dx"])
     idx = np.arange(len(ui))
     W = 0.04
-    TARGET_SER = TARGET_BER * 2
     Pth1 = msmts["average"] - oma/3
     Pth2 = msmts["average"]
     Pth3 = msmts["average"] + oma/3
