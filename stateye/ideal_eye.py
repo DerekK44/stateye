@@ -1,6 +1,7 @@
 import numpy as np
 from .eye import Eye
 from .ideal_cdr import lock_ideal_cdr
+from typing import Optional
 
 
 class IdealEye(Eye):
@@ -15,10 +16,21 @@ class IdealEye(Eye):
         hdf5_path: str = "eye.h5",
         sampling_offset_mode: str = "half_ui",
         dump_to_hdf5: bool = False,
-        num_bits_to_filter_on_before: int = 3,
-        num_bits_to_filter_on_after: int = 1,
+        num_bits_to_filter_on_before: Optional[int] = None,
+        num_bits_to_filter_on_after: Optional[int] = None,
     ):
         assert sampling_offset_mode in ["adaptive", "half_ui"]
+
+        # Establish modulation-format dependent filter defaults
+        if (num_bits_to_filter_on_before is None) and (format == "NRZ"):
+            num_bits_to_filter_on_before = 3
+        if (num_bits_to_filter_on_after is None) and (format == "NRZ"):
+            num_bits_to_filter_on_after = 1
+        if (num_bits_to_filter_on_before is None) and (format == "PAM4"):
+            num_bits_to_filter_on_before = 1
+        if (num_bits_to_filter_on_after is None) and (format == "PAM4"):
+            num_bits_to_filter_on_after = 1
+
         Eye.__init__(
             self,
             datarate_gbps,

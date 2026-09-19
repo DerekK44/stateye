@@ -127,17 +127,9 @@ For eye data processing, there are generally three steps:
 3. Extract statistics from the eye diagram or bathtub arrays
     - BER, eye height/width, TDEC, etc.
 
-### Waveform metrics
-For a number of metrics (such as OMA, TDEC, VECP, rise time, fall time, etc.) the 1-level and 0-level need to be computed.  Standards typically specify that these two values should be determined from a slow clock pattern (long series of 0's and 1's).  However, often times we're just dealing with a waveform with random data.  `stateye` estimates these in three ways:
-- `8180`: Stateye will filter on long series of 8x ones or 8x zeros
-- `4140`: Stateye will filter on shorter series of 4x ones or 4x zeros, since these are statistically much more likely to occur in random data
-- `xp`: Stateye will look at all of the data, and estimate the the data levels from the distributions above and below the crossing-point
-
-`stateye` will append `_8180`, `_4140`, or `_xp` to several measurement names (e.g. `tdec_8180`) so you know which method was used to compute the 1 or 0 level.  It is strongly recommended that you use the `_8180` metrics, provided that long enough 1 and 0 patterns are found in the waveform.
-
 ### Data levels (dLevs)
 
-By default, `stateye` filters on 3 bits before the sampling instant and 1 bit after the sampling instant for NRZ signals.  This means the pattern is 5-bits wide and so `d = 2^5 = 32`.  For signals with more or less pre- or post-cursor ISI, this filter can be expanded or reduced, but increasing it comes at the cost of larger memory and slower data processing.  To do this, simply provide some additional arguments to the eye class:
+By default, `stateye` filters on 3 symbols before + 1 symbol after the sampling instant for NRZ signals, and 1 symbol before + 1 symbol after for PAM-4.  This means the pattern is 5-symbols wide for NRZ and 3-symbols wide for PAM-4 and so `d = 2^5 = 32` for NRZ and `d = 4^3 = 64` for PAM-4.  For signals with more or less pre- or post-cursor ISI, this filter can be expanded or reduced, but increasing it comes at the cost of larger memory and slower data processing.  To do this, simply provide some additional arguments to the eye class:
 
 ```python
     eye = IdealEye(
@@ -181,6 +173,14 @@ eye.plot(show=True, pattern=[0,1,0])
 ```
 ![alt text](docs/source/imgs/eye_pattern010.png)
 
+### Waveform metrics
+For a number of metrics (such as OMA, TDEC, VECP, rise time, fall time, etc.) the 1-level and 0-level need to be computed.  Standards typically specify that these two values should be determined from a slow clock pattern (long series of 0's and 1's).  However, often times we're just dealing with a waveform with random data.  `stateye` estimates these in three ways:
+- `8180`: Stateye will filter on long series of 8x ones or 8x zeros
+- `4140`: Stateye will filter on shorter series of 4x ones or 4x zeros, since these are statistically much more likely to occur in random data
+- `xp`: Stateye will look at all of the data, and estimate the the data levels from the distributions above and below the crossing-point
+
+`stateye` will append `_8180`, `_4140`, or `_xp` to several measurement names (e.g. `tdec_8180`) so you know which method was used to compute the 1 or 0 level.  It is strongly recommended that you use the `_8180` metrics, provided that long enough 1 and 0 patterns are found in the waveform.
+
 ### A note on TDEC
 
 Transmitter dispersion and eye closure (TDEC) is implemented according to IEEE Std 802.3-2015 and requires a few values from the user in order to be specified properly:
@@ -197,6 +197,22 @@ In the above:
 - M1 accounts for mode partition noise that could be added by the optical channel
 - M2 accounts for modal noise that could be added by the optical channel
 - BER is the target bit error rate for the link
+
+
+### A note on TDECQ
+
+Transmitter dispersion and eye closure quarternary (TDECQ) for PAM-4 waveforms is implemented according to IEEE Std 802.3-2022 and requires a few values from the user in order to be specified properly:
+
+```python
+eye = IdealEye( ... )
+eye.set_tdecq_s_noise(s)
+eye.set_tdecq_ceq(ceq)
+eye.set_tdec_ser(4.56e-4)
+```
+In the above:
+- S is the standard deviation of the noise of the O/E and oscilloscope combination.  This needs to be in the base units for the y-direction of the eye (volts).
+- Ceq is the reference receiver noise enhancement factor.  Equation (121-9) from section 121.8.5.3 in 802.3-2022.
+- SER is the target PAM-4 symbol error rate for the link
 
 
 # Bath tub plots

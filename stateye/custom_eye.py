@@ -3,6 +3,7 @@ from scipy.stats import kstest
 from colorama import Fore, Style
 from .eye import Eye
 from .units import ureg
+from typing import Optional
 
 
 class CustomEye(Eye):
@@ -16,9 +17,15 @@ class CustomEye(Eye):
         format: str = "NRZ",
         hdf5_path: str = "eye.h5",
         dump_to_hdf5: bool = False,
-        num_bits_to_filter_on_before: int = 3,
-        num_bits_to_filter_on_after: int = 1,
+        num_bits_to_filter_on_before: Optional[int] = None,
+        num_bits_to_filter_on_after: Optional[int] = None,
     ):
+        # Establish modulation-format dependent filter defaults
+        if (num_bits_to_filter_on_before is None) and (format == "NRZ"):
+            num_bits_to_filter_on_before = 3
+        if (num_bits_to_filter_on_after is None) and (format == "PAM4"):
+            num_bits_to_filter_on_after = 1
+
         Eye.__init__(
             self,
             datarate_gbps,
